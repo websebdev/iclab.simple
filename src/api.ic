@@ -1,0 +1,84 @@
+# Copyright 2019 Farzad Senart and Lionel Suss. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+from ic import aws, awsenv
+
+
+@resource
+def brick(stage, version):
+    api = aws.api_gateway.rest_api(
+        "rest_api",
+        body=dict(openapi="3.0.0", paths=dict(), version=version, components=dict()),
+    )
+    dpl = aws.api_gateway.deployment(
+        f'deployment_v{version.replace(".", "_")}', rest_api_id=api["ref"]
+    )
+    stg = aws.api_gateway.stage(
+        "stage", rest_api_id=api["ref"], deployment_id=dpl["ref"], stage_name=stage
+    )
+
+    return Resource(
+        api=api,
+        url=(
+            f"https://{api['ref']}.execute-api.{awsenv.region}.amazonaws.com/"
+            f"{stg['ref']}"
+        ),
+        http=_http,
+        auth=_auth,
+        cognito=_cognito,
+    )
+
+
+def _http(self, method, path, *, integration, auth=None, scope=None, binary_media=None):
+    props = self["api"].props
+    info = props["body"]["paths"].setdefault(path, {})
+    method = method.lower()
+    if method == "any":
+        method = "x-amazon-apigateway-any-method"
+    info[method] = {"x-amazon-apigateway-integration": integration}
+    if auth:
+        info[method]["security"] = [{auth: scope or []}]
+    if binary_media:
+        binary_media = [binary_media] if isinstance(binary_media, str) else binary_media
+        props["body"]["x-amazon-apigateway-binary-media-types"] = list(
+            set(
+                props["body"].get("x-amazon-apigateway-binary-media-types", [])
+                + binary_media
+            )
+        )
+    self["api"].props = props
+
+
+def _auth(self, name, header, **kwargs):
+    props = self["api"].props
+    info = props["body"]["components"]["securitySchemes"] = {}
+    kwargs.setdefault("in", "header")
+    info[name] = dict(type="apiKey", name=header, **kwargs)
+    self["api"].props = props
+
+
+def _cognito(self, name, client_ids, providers, header="Authorization"):
+    expr = "|".join([client_ids] if isinstance(client_ids, str) else client_ids)
+    return self.auth(
+        name,
+        header,
+        **{
+            "x-amazon-apigateway-authtype": "cognito_user_pools",
+            "x-amazon-apigateway-authorizer": dict(
+                type="cognito_user_pools",
+                providerARNs=providers if isinstance(providers, list) else [providers],
+                identityValidationExpression=f"^({expr})$",
+            ),
+        },
+    )

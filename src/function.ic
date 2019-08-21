@@ -1,0 +1,250 @@
+# Copyright 2019 Farzad Senart and Lionel Suss. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+from ic import aws, awsenv
+
+
+@resource
+def brick(runtime, code, *, environ=None, policies=None, log_retention=30, **kwargs):
+    role_props = dict(
+        assume_role_policy_document=dict(
+            Version="2012-10-17",
+            Statement=dict(
+                Effect="Allow",
+                Principal=dict(Service="lambda.amazonaws.com"),
+                Action="sts:AssumeRole",
+            ),
+        ),
+        managed_policy_arns=[
+            "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+        ],
+    )
+    for i, policy in enumerate(policies or []):
+        if isinstance(policy, str):
+          if "/" in policy:
+            role_props["managed_policy_arns"].append(policy)
+          else:
+            role_props["managed_policy_arns"].append(
+                f"arn:aws:iam::aws:policy/{policy}"
+            )
+        else:
+            role_props.setdefault("policies", []).append(
+                dict(
+                    policy_name=policy.get("name", f"policy_{i}"),
+                    policy_document=dict(
+                        Version="2012-10-17",
+                        Statement=[
+                            dict(
+                                Effect=policy["effect"].title(),
+                                Action=policy["action"],
+                                Resource=policy["resource"],
+                                Condition=policy.get("condition"),
+                            )
+                        ],
+                    ),
+                )
+            )
+    role = aws.iam.role("role", **role_props)
+
+    func_props = dict(runtime=runtime, role=role["arn"])
+    if code.name.rpartition(".")[-1] == "zip":
+        func_props.update(
+            code=dict(s3_bucket=code.bucket, s3_key=code.key), handler="handler.handle"
+        )
+    else:
+        func_props.update(code=dict(zip_file=code.text), handler="index.handle")
+    if environ:
+        func_props.update(environment=dict(variables=environ))
+    func_props.update(kwargs)
+    func = aws.lambda_.function("function", **func_props)
+    log_group = aws.logs.log_group(
+        "log_group",
+        log_group_name=f"/aws/lambda/{func['ref']}",
+        retention_in_days=log_retention,
+    )
+    return Resource(
+        function=func,
+        role=role,
+        http=_http,
+        table=_table,
+        table_stream=_table_stream,
+        storage=_storage,
+        storage_events=_storage_events,
+        secret=_secret,
+        routes=[],
+    )
+
+
+def _http(self, api, method, path, **kwargs):
+    if "_api_integ" not in self:
+        invocation_role = aws.iam.role(
+            "api_invocation_role",
+            assume_role_policy_document=dict(
+                Version="2012-10-17",
+                Statement=dict(
+                    Effect="Allow",
+                    Principal=dict(Service="apigateway.amazonaws.com"),
+                    Action="sts:AssumeRole",
+                ),
+            ),
+            policies=[
+                dict(
+                    policy_name="invoke_function",
+                    policy_document=dict(
+                        Statement=dict(
+                            Effect="Allow",
+                            Resource=self["function"]["arn"],
+                            Action="lambda:InvokeFunction",
+                        )
+                    ),
+                )
+            ],
+        )
+        self._api_integ = dict(
+            uri=(
+                f"arn:aws:apigateway:{awsenv.region}:lambda:path/"
+                f"2015-03-31/functions/{self['function']['arn']}/invocations"
+            ),
+            httpMethod="POST",
+            type="aws_proxy",
+            credentials=invocation_role["arn"],
+        )
+    api.http(method, path, integration=self._api_integ, **kwargs)
+    self.setdefault("routes", []).append(f"{api['url']}{path}")
+
+
+def _table(self, table, key, *, actions=None):
+    actions = [f"dynamodb:{a}" for a in (actions or ["*"])]
+    role_props = self["role"].props
+    role_props.setdefault("policies", []).append(
+        dict(
+            policy_name=f"use_table_{key}",
+            policy_document=dict(
+                Version="2012-10-17",
+                Statement=[dict(Effect="Allow", Action=actions, Resource=table["arn"])],
+            ),
+        )
+    )
+    self["role"].props = role_props
+    func_props = self["function"].props
+    key = f"TABLE_{key.upper()}"
+    func_props.setdefault("environment", dict(variables=dict()))
+    func_props["environment"]["variables"][key] = table["ref"]
+    self["function"].props = func_props
+
+
+def _table_stream(self, table, *, position="LATEST", batch=100, enabled=True):
+    role_props = self["role"].props
+    role_props.setdefault("policies", []).append(
+        dict(
+            policy_name=f"listen_table_{'_'.join(table.lineage[1:-3])}",
+            policy_document=dict(
+                Version="2012-10-17",
+                Statement=[
+                    dict(
+                        Effect="Allow",
+                        Action=[
+                            "dynamodb:DescribeStream",
+                            "dynamodb:GetRecords",
+                            "dynamodb:GetShardIterator",
+                            "dynamodb:ListStreams",
+                        ],
+                        Resource=[table["arn"], table["stream_arn"]],
+                    )
+                ],
+            ),
+        )
+    )
+    self["role"].props = role_props
+    trigger = aws.lambda_.event_source_mapping(
+        "_".join(table.lineage[1:-3]) + "_trigger",
+        event_source_arn=table["stream_arn"],
+        function_name=self["function"]["ref"],
+        starting_position=position,
+        batch_size=batch,
+        enabled=enabled,
+    )
+    trigger.require(self["role"])
+
+
+def _storage(self, storage, key, *, actions=None):
+    actions = [f"s3:{a}" for a in (actions or ["*"])]
+    role_props = self["role"].props
+    role_props.setdefault("policies", []).append(
+        dict(
+            policy_name=f"use_storage_{key}",
+            policy_document=dict(
+                Version="2012-10-17",
+                Statement=[
+                    dict(
+                        Effect="Allow",
+                        Action=actions,
+                        Resource=[storage["arn"], f"{storage['arn']}/*"],
+                    )
+                ],
+            ),
+        )
+    )
+    self["role"].props = role_props
+    func_props = self["function"].props
+    key = f"STORAGE_{key.upper()}"
+    func_props.setdefault("environment", dict(variables=dict()))
+    func_props["environment"]["variables"][key] = storage["ref"]
+    self["function"].props = func_props
+
+
+def _storage_events(self, storage, events):
+    func = self["function"]
+    name = "_".join(storage.lineage[1:-3]) + "_permission"
+    if f"_{name}" not in self:
+        self[f"_{name}"] = aws.lambda_.permission(
+            name,
+            action="lambda:InvokeFunction",
+            function_name=func["arn"],
+            principal="s3.amazonaws.com",
+            source_account=awsenv.account_id,
+            # source_arn=storage["arn"],
+            # Due to circular dependencies one needs to specify a static
+            # bucket name and construct the arn by hand to use source_arn
+            # https://aws.amazon.com/premiumsupport/knowledge-center/unable-validate-circular-dependency-cloudformation/
+        )
+    props = storage.props
+    conf = props.setdefault("notification_configuration", {})
+    conf = conf.setdefault("lambda_configurations", [])
+    for event in events:
+        conf.append(dict(event=f"s3:{event}", function=func["arn"]))
+    storage.props = props
+
+
+def _secret(self, secret, key, *, actions=None):
+    actions = [f"secretsmanager:{a}" for a in (actions or ["*"])]
+    name = secret.props["name"]
+    role_props = self["role"].props
+    role_props.setdefault("policies", []).append(
+        dict(
+            policy_name=f"use_secret_{key}",
+            policy_document=dict(
+                Version="2012-10-17",
+                Statement=[
+                    dict(Effect="Allow", Action=actions, Resource=secret["ref"])
+                ],
+            ),
+        )
+    )
+    self["role"].props = role_props
+    func_props = self["function"].props
+    env = f"SECRET_{key.upper()}"
+    func_props.setdefault("environment", dict(variables=dict()))
+    func_props["environment"]["variables"][env] = name
+    self["function"].props = func_props

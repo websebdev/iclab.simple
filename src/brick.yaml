@@ -1,0 +1,5 @@
+name: iclab.simple
+version: v0.3.0
+license: Apache-2.0
+description: A simple brick for building serverless applications
+main: :brick

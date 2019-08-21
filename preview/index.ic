@@ -1,0 +1,11 @@
+from iclab import simple
+
+from . import assets
+
+
+@resource
+def hello_world():
+    api = simple.api("api", "demo", "0.1.0")
+    fun = simple.function("fun", "nodejs8.10", assets["handler.js"])
+    fun.http(api, "get", "/hello")
+    return fun["routes"][0]

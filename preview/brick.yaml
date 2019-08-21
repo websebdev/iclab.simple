@@ -1,0 +1,8 @@
+name: preview.hello_world
+version: v0.1.0
+private: true
+main: :hello_world
+require:
+  iclab.simple: v0.3.0
+assets:
+- handler.js
