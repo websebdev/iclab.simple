@@ -1,4 +1,5 @@
 # iclab.simple
+
 > A simple brick for building serverless applications
 
 ![IC Public Index version][badge-version]
@@ -6,11 +7,11 @@
 [![License][badge-license]][license]
 [![Slack][badge-slack]][ic-slack]
 
-[ic.dev][ic-home] is an open source project that makes it easy to 
+[ic.dev][ic-home] is an open source project that makes it easy to
 compose, share, and deploy cloud infrastructure bricks. This project
-provides an [IC Public Index][ic-index] brick to build and secure 
-serverless applications with AWS Lambda, Amazon API Gateway, Amazon 
-Cognito, and various other resources such as Amazon DynamoDB, Amazon S3, 
+provides an [IC Public Index][ic-index] brick to build and secure
+serverless applications with AWS Lambda, Amazon API Gateway, Amazon
+Cognito, and various other resources such as Amazon DynamoDB, Amazon S3,
 etc.
 
 ## Preview
@@ -27,12 +28,13 @@ def hello_world():
     fun.http(api, "get", "/hello")
     return fun["routes"][0]
 ```
+
 ```javascript
 // handler.js
 exports.handle = async () => ({
-    statusCode: 200,
-    body: "Hello, World!\n"
-})
+  statusCode: 200,
+  body: "Hello, World!\n"
+});
 ```
 
 ```
@@ -42,8 +44,9 @@ Hello, World!
 ```
 
 ## Usage
-> If you haven't yet installed the [IC Command-Line Interface][ic-cli], 
-check out the [Getting Started][ic-start] page.
+
+> If you haven't yet installed the [IC Command-Line Interface][ic-cli],
+> check out the [Getting Started][ic-start] page.
 
 <!-- --------------------------------------------------------------- -->
 <details>
@@ -114,7 +117,7 @@ def example():
         "demo",
         # The version of the API for the deployment.
         # - Example: 1.0.0 (without a leading v letter)
-        # - Each time you add, remove, or modify a method or a path in 
+        # - Each time you add, remove, or modify a method or a path in
         #   the API, you must also update this version.
         "0.1.0",
     )
@@ -138,7 +141,7 @@ def example():
     # Each time you add an endpoint to the function, the corresponding
     # route is appended to the function's routes attribute.
     # ["https://xxxxxxxxxx.execute-api.us-east-1.amazonaws.com/demo/hello"]
-    return fun["routes"] 
+    return fun["routes"]
 ```
 
 </details>
@@ -149,7 +152,7 @@ def example():
 ```javascript
 // handler.js
 const https = require("https");
-const Buffer = require('buffer').Buffer
+const Buffer = require("buffer").Buffer;
 
 exports.handle = (event, context, callback) => {
   https.get("https://ic.dev/favicon.ico", res => {
@@ -160,11 +163,11 @@ exports.handle = (event, context, callback) => {
         statusCode: 200,
         headers: { "Content-Type": "image/x-icon" },
         isBase64Encoded: true, // <==
-        body: Buffer.concat(chunks).toString('base64'),
-      })
+        body: Buffer.concat(chunks).toString("base64")
+      });
     });
   });
-}
+};
 ```
 
 ```python
@@ -181,9 +184,9 @@ def example():
 
     # Create an Amazon API Gateway endpoint for the function.
     fun.http(
-      api, 
-      "GET", 
-      "/image", 
+      api,
+      "GET",
+      "/image",
       # The list of binary MIME handled by this route.
       # - Use "*/*" if you need to serve images, etc inside a browser
       # - If you use specific 'image/jpeg' like MIME, be sure to query
@@ -214,7 +217,7 @@ def example(client_ids, user_pool_arn):
     api.cognito(
         # A name to identify this particular authorizer in the API config.
         "main",
-        # The list of Amazon Cognito app client ids valid for this 
+        # The list of Amazon Cognito app client ids valid for this
         # authorizer.
         # - It can be a single client id: "abcd1234"
         # - It can be an array of client ids: ["abcd1234", "efgh56789"]
@@ -246,31 +249,33 @@ def example(client_ids, user_pool_arn):
 
 ```javascript
 // handler.js
-const AWS = require('aws-sdk');
+const AWS = require("aws-sdk");
 const client = new AWS.DynamoDB.DocumentClient();
 
 exports.handle = async () => {
-  const data = await client.update({
-    TableName: process.env.TABLE_EXAMPLE, // <==
-    Key: {
-      customer_id: 'c1',
-      order_id: 'o1',
-    },
-    UpdateExpression: 'add #counter :value',
-    ExpressionAttributeNames: {
-      '#counter': 'counter',
-    },
-    ExpressionAttributeValues: {
-      ':value': 1,
-    },
-    ReturnValues: 'ALL_NEW',
-  }).promise()
+  const data = await client
+    .update({
+      TableName: process.env.TABLE_EXAMPLE, // <==
+      Key: {
+        customer_id: "c1",
+        order_id: "o1"
+      },
+      UpdateExpression: "add #counter :value",
+      ExpressionAttributeNames: {
+        "#counter": "counter"
+      },
+      ExpressionAttributeValues: {
+        ":value": 1
+      },
+      ReturnValues: "ALL_NEW"
+    })
+    .promise();
 
   return {
     statusCode: 200,
     body: `${data["Attributes"]["counter"]}\n`
-  }
-}
+  };
+};
 ```
 
 ```python
@@ -286,7 +291,7 @@ def example():
     table = simple.table(
         "table",
         # Specify 'name' as a partition key of type 'string'
-        # - Valid types are binary, boolean, binary_set, list, map, 
+        # - Valid types are binary, boolean, binary_set, list, map,
         #   number, number_set, null, string, or string_set.
         ("customer_id", "string"),
         # If you want a sort key, otherwise omit.
@@ -344,10 +349,10 @@ def example():
 ```javascript
 // handler.js
 exports.handle = async (event, context) => {
-  event.Records.forEach(function (record) {
+  event.Records.forEach(function(record) {
     console.log(record.dynamodb);
-  })
-}
+  });
+};
 ```
 
 ```python
@@ -391,18 +396,20 @@ def example():
 
 ```javascript
 // handler.js
-const AWS = require('aws-sdk');
+const AWS = require("aws-sdk");
 const client = new AWS.S3();
 
 exports.handle = async (event, context) => {
-  await client.putObject({
-    Body: new Buffer(event.body, 'base64'),
-    Bucket: process.env.STORAGE_EXAMPLE, // <==
-    Key: "example",
-  }).promise();
+  await client
+    .putObject({
+      Body: new Buffer(event.body, "base64"),
+      Bucket: process.env.STORAGE_EXAMPLE, // <==
+      Key: "example"
+    })
+    .promise();
 
-  return { statusCode: 200 }
-}
+  return { statusCode: 200 };
+};
 ```
 
 ```python
@@ -453,10 +460,10 @@ def example():
 ```javascript
 // handler.js
 exports.handle = async (event, context) => {
-  event.Records.forEach(function (record) {
+  event.Records.forEach(function(record) {
     console.log(record.s3);
-  })
-}
+  });
+};
 ```
 
 ```python
@@ -495,15 +502,17 @@ def example():
 
 ```javascript
 // handler.js
-const AWS = require('aws-sdk');
+const AWS = require("aws-sdk");
 const client = new AWS.SecretsManager();
 
 exports.handle = async () => {
-  const secret = await client.getSecretValue({
-    SecretId: process.env.SECRET_EXAMPLE, // <==
-  }).promise();
-  console.log(secret)
-}
+  const secret = await client
+    .getSecretValue({
+      SecretId: process.env.SECRET_EXAMPLE // <==
+    })
+    .promise();
+  console.log(secret);
+};
 ```
 
 ```python
@@ -547,7 +556,7 @@ def example():
 
 Copyright 2019 Farzad Senart and Lionel Suss. All rights reserved.
 
-Unless otherwise stated, this project is licensed under the [Apache 
+Unless otherwise stated, this project is licensed under the [Apache
 License Version 2.0][license-file].
 
 [badge-version]: https://img.shields.io/badge/ic-v0.3.0-orange
